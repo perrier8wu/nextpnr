@@ -519,7 +519,33 @@ static bool is_nextpnr_iob(Context *ctx, CellInfo *cell)
 
 static bool is_ice_iob(const Context *ctx, const CellInfo *cell)
 {
-    return is_sb_io(ctx, cell) || is_sb_gb_io(ctx, cell);
+    return is_sb_io(ctx, cell) || is_sb_io_od(ctx, cell) || is_sb_gb_io(ctx, cell);
+}
+
+template <typename KeyType, typename ValueType>
+static void change_key_if_any(dict<KeyType, ValueType>& dic, IdString old_key, IdString new_key)
+{
+    if(dic.count(old_key)){
+        dic[new_key] = std::move(dic[old_key]);
+        dic.erase(old_key);
+    }
+}
+
+static void change_port(CellInfo* ci, IdString old_port, IdString new_port){
+    if(ci->ports.count(old_port)){
+        ci->ports[new_port] = std::move(ci->ports[old_port]);
+        ci->ports.erase(old_port);
+
+        NetInfo* net = ci->ports[new_port].net;
+
+        if(net){
+            for(auto& usr : net->users){
+                if(usr.port == old_port){
+                    usr.port = new_port;
+                }
+            }
+        }
+    }
 }
 
 // Pack IO buffers
@@ -530,8 +556,79 @@ static void pack_io(Context *ctx)
     std::vector<std::unique_ptr<CellInfo>> new_cells;
     log_info("Packing IOs..\n");
 
+    log_info("---\n");
+    for(auto& cell : ctx->cells){
+        CellInfo* ci = cell.second.get();
+        log_info(">>cell='%s' type='%s'\n", ci->name.c_str(ctx), ci->type.c_str(ctx));
+
+        for(auto& I : ci->ports){
+            NetInfo* net = I.second.net;
+
+            log_info("port='%s':%s\n", I.first.c_str(ctx), I.second.name.c_str(ctx));
+            log_info(":net=%p\n", net);
+            log_info(":type=%d\n", I.second.type);
+
+            if(net){
+                log_info("<<net='%s'\n", net->name.c_str(ctx));
+
+                for(auto& J : net->users){
+                    log_info("user='%s':%s\n", J.cell->name.c_str(ctx), J.port.c_str(ctx));
+                }
+            }
+        }
+
+        for(auto& I : ci->params){
+            log_info("param='%s':%s\n", I.first.c_str(ctx), I.second.to_string().c_str());
+        }
+
+        for(auto& I : ci->attrs){
+            log_info("attr='%s':%s\n", I.first.c_str(ctx), I.second.to_string().c_str());
+        }
+    }
+    log_info("===\n");
+
+    // Transform SB_IO_OD to SB_IO
+    for (auto& cell : ctx->cells){
+        CellInfo* ci = cell.second.get();
+
+        if(ci->type == ctx->id("SB_IO_OD")){
+            log_info("SB_IO_OD => SB_IO\n");
+
+            change_port(ci, id_PACKAGEPIN, id_PACKAGE_PIN);
+            change_port(ci, id_LATCHINPUTVALUE, id_LATCH_INPUT_VALUE);
+            change_port(ci, id_CLOCKENABLE, id_CLOCK_ENABLE);
+            change_port(ci, id_INPUTCLK, id_INPUT_CLK);
+            change_port(ci, id_OUTPUTCLK, id_OUTPUT_CLK);
+            change_port(ci, id_OUTPUTENABLE, id_OUTPUT_ENABLE);
+            change_port(ci, id_DOUT1, id_D_OUT_1);
+            change_port(ci, id_DOUT0, id_D_OUT_0);
+            change_port(ci, id_DIN1, id_D_IN_1);
+            change_port(ci, id_DIN0, id_D_IN_0);
+            
+            ci->type = id_SB_IO;
+        }
+    }
+
     for (auto &cell : ctx->cells) {
+        //IdString xx = cell.first;
         CellInfo *ci = cell.second.get();
+
+        // log_info("xx='%s'\n", xx.c_str(ctx));
+        // log_info("name='%s'\n", ci->name.c_str(ctx));
+        // log_info("type='%s'\n", ci->type.c_str(ctx));
+
+        // for(auto& I : ci->params){
+        //     log_info("param='%s':%s\n", I.first.c_str(ctx), I.second.to_string().c_str());
+        // }
+
+        // for(auto& I : ci->attrs){
+        //     log_info("attr='%s':%s\n", I.first.c_str(ctx), I.second.to_string().c_str());
+        // }
+
+        // for(auto& I : ci->ports){
+        //     log_info("port='%s'\n", I.first.c_str(ctx));
+        // }
+
         if (is_nextpnr_iob(ctx, ci)) {
             CellInfo *sb = nullptr, *rgb = nullptr;
             if (ci->type == ctx->id("$nextpnr_ibuf") || ci->type == ctx->id("$nextpnr_iobuf")) {
@@ -539,7 +636,9 @@ static void pack_io(Context *ctx)
 
             } else if (ci->type == ctx->id("$nextpnr_obuf")) {
                 NetInfo *net = ci->ports.at(id_I).net;
+
                 sb = net_only_drives(ctx, net, is_ice_iob, id_PACKAGE_PIN, true, ci);
+
                 if (net && net->driver.cell &&
                     (is_sb_rgba_drv(ctx, net->driver.cell) || is_sb_rgb_drv(ctx, net->driver.cell)))
                     rgb = net->driver.cell;
@@ -636,6 +735,29 @@ static void pack_io(Context *ctx)
     }
     for (auto &ncell : new_cells) {
         ctx->cells[ncell->name] = std::move(ncell);
+    }
+
+
+    for(auto& I : ctx->cells){
+        IdString yy = I.first;
+        CellInfo* ci = I.second.get();
+
+        log_info("yy='%s'\n", yy.c_str(ctx));
+
+        log_info("name='%s'\n", ci->name.c_str(ctx));
+        log_info("type='%s'\n", ci->type.c_str(ctx));
+
+        for(auto& J : ci->params){
+            log_info("param='%s':%s\n", J.first.c_str(ctx), J.second.to_string().c_str());
+        }
+
+        for(auto& J : ci->attrs){
+            log_info("attr='%s':%s\n", J.first.c_str(ctx), J.second.to_string().c_str());
+        }
+
+        for(auto& J : ci->ports){
+            log_info("port='%s'\n", J.first.c_str(ctx));
+        }
     }
 }
 

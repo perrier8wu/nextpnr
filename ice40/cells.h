@@ -47,6 +47,8 @@ inline bool is_lc(const BaseCtx * /*ctx*/, const CellInfo *cell) { return cell->
 // Return true if a cell is a SB_IO
 inline bool is_sb_io(const BaseCtx * /*ctx*/, const CellInfo *cell) { return cell->type == id_SB_IO; }
 
+inline bool is_sb_io_od(const BaseCtx* /*ctx*/, const CellInfo* cell){ return cell->type == id_SB_IO_OD; }
+
 // Return true if a cell is a SB_GB_IO
 inline bool is_sb_gb_io(const BaseCtx * /*ctx*/, const CellInfo *cell) { return cell->type == id_SB_GB_IO; }
 
